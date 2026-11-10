@@ -1,0 +1,66 @@
+# Refreshes the map's data from NYC Open Data once a month, then publishes the site.
+# - Monthly (1st of the month, 06:17 UTC) and "Run workflow" button: download, rebuild data.json, publish.
+# - Any push to main (for example, editing index.html): publish with the data.json already in the repo.
+name: Update pavement data
+
+on:
+  schedule:
+    - cron: "17 6 1 * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write   # lets the job commit the new data.json
+  pages: write      # lets the job publish to GitHub Pages
+  id-token: write   # required by the Pages deploy step
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update-and-publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download ratings and rebuild data.json
+        if: github.event_name != 'push'
+        env:
+          NYC_APP_TOKEN: ${{ secrets.NYC_APP_TOKEN }}   # optional; the job works without it
+        run: python scripts/update_data.py data.json
+
+      - name: Save the new data.json to the repository
+        if: github.event_name != 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data.json
+          if git diff --cached --quiet; then
+            echo "Data did not change."
+          else
+            git commit -m "Refresh pavement data"
+            git push
+          fi
+
+      - name: Collect the site files
+        run: |
+          mkdir _site
+          cp index.html data.json _site/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

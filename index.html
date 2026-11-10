@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NYC Smooth Streets Map</title>
+<style>
+  :root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800&family=Overpass+Mono:wght@400;600&display=swap">
+<style>
+  /* Layout: full-height split. Canvas street map of all five boroughs on the
+     left; cutoff slider, rating histogram and borough totals on the right.
+     On phones the map sits above the panel. */
+  :root {
+    --bg: #e8ebeb;          /* concrete */
+    --panel: #f7f8f8;
+    --ink: #1a2125;         /* asphalt */
+    --muted: #5a656b;
+    --rule: #d6dbdd;
+    --below: #cdd3d6;       /* streets under the cutoff */
+    --below-bar: #c3c9cc;
+    --match: #0b7a5c;       /* streets at or above the cutoff */
+    --label: #48545a;
+    --font-ui: "Overpass", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-data: "Overpass Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101417; --panel: #161b1f; --ink: #e5eaec; --muted: #95a1a7; --rule: #262e33;
+      --below: #2a3136; --below-bar: #3a4349; --match: #45c99a; --label: #a7b2b8;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101417; --panel: #161b1f; --ink: #e5eaec; --muted: #95a1a7; --rule: #262e33;
+    --below: #2a3136; --below-bar: #3a4349; --match: #45c99a; --label: #a7b2b8;
+    color-scheme: dark;
+  }
+
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.5; }
+  .app {
+    box-sizing: border-box; height: 100%;
+    display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 16px;
+  }
+
+  /* ---------- map ---------- */
+  .map {
+    position: relative; min-width: 0; min-height: 0;
+    border-radius: 10px; overflow: hidden;
+    background: var(--panel); border: 1px solid var(--rule);
+    touch-action: none; cursor: grab;
+  }
+  .map.dragging { cursor: grabbing; }
+  .map canvas { display: block; width: 100%; height: 100%; }
+  .controls { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .controls button {
+    width: 36px; height: 36px; border-radius: 8px;
+    border: 1px solid var(--rule); background: var(--panel); color: var(--ink);
+    font: 600 18px var(--font-ui); cursor: pointer; display: grid; place-items: center;
+  }
+  .controls button:hover { border-color: var(--muted); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--match); outline-offset: 2px; }
+  .scalebar { position: absolute; left: 12px; bottom: 12px; color: var(--muted); font: 400 11px var(--font-data); pointer-events: none; }
+  .scalebar span { display: block; height: 6px; border: 1.5px solid var(--muted); border-top: 0; margin-top: 2px; }
+  .tip {
+    position: absolute; z-index: 5; pointer-events: none;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px;
+    font-size: 13px; line-height: 1.35; box-shadow: 0 6px 18px rgba(0,0,0,.14); max-width: 250px;
+  }
+  .tip b { display: block; font-weight: 800; }
+  .tip .num { font-family: var(--font-data); font-variant-numeric: tabular-nums; color: var(--muted); }
+  .tip .state { display: inline-block; margin-top: 4px; font: 600 11px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; }
+  .tip .state.on { color: var(--match); }
+  .tip .state.off { color: var(--muted); }
+
+  /* ---------- panel ---------- */
+  .panel { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
+  .eyebrow { margin: 0; color: var(--muted); font: 600 11px var(--font-ui); letter-spacing: .14em; text-transform: uppercase; }
+  h1 { margin: 2px 0 6px; font: 800 30px/1.05 var(--font-ui); letter-spacing: -.01em; text-wrap: balance; }
+  .intro { margin: 0; color: var(--muted); }
+  .cutoff { border-top: 1px solid var(--rule); padding-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .cutoff label { font-weight: 600; }
+  .readout { display: flex; align-items: baseline; gap: 10px; }
+  .readout output { font: 600 44px/1 var(--font-data); font-variant-numeric: tabular-nums; color: var(--match); }
+  .readout span { color: var(--muted); }
+  input[type="range"] { width: 100%; accent-color: var(--match); margin: 0; }
+  .hist { width: 100%; height: auto; display: block; overflow: visible; }
+  .hist .axis { fill: var(--muted); font: 400 10px var(--font-data); }
+  .hist .cap { fill: var(--muted); font: 600 10px var(--font-ui); letter-spacing: .1em; text-transform: uppercase; }
+  .hist .base { stroke: var(--rule); stroke-width: 1; }
+  .hist .on { fill: var(--match); }
+  .hist .off { fill: var(--below-bar); }
+  .hist .hit { fill: transparent; cursor: default; }
+  .checks { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+  .checks label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+  .checks input { margin-top: 4px; accent-color: var(--match); }
+  .summary { border-top: 1px solid var(--rule); padding-top: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+  .stats div { display: flex; flex-direction: column; gap: 2px; }
+  .stats dt { color: var(--muted); font: 600 10px var(--font-ui); letter-spacing: .1em; text-transform: uppercase; }
+  .stats dd { margin: 0; font: 600 19px/1.1 var(--font-data); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; color: var(--muted); font: 600 10px var(--font-ui); letter-spacing: .1em; text-transform: uppercase; padding: 0 0 6px; }
+  td { padding: 6px 0; border-top: 1px solid var(--rule); }
+  th.n, td.n { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+  td.n { font-size: 13px; }
+  .bar { height: 4px; border-radius: 2px; background: var(--below-bar); margin-top: 4px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--match); border-radius: 2px; }
+  .notes { border-top: 1px solid var(--rule); padding-top: 14px; color: var(--muted); font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+  .notes p { margin: 0; }
+  .loading { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); background: var(--panel); }
+  .loading.error { color: var(--ink); }
+
+  @media (max-width: 820px) {
+    html, body { height: auto; }
+    .app { height: auto; grid-template-columns: minmax(0, 1fr); }
+    .map { height: 62svh; min-height: 360px; }
+    .panel { overflow: visible; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="map" id="map" aria-label="Map of New York City street segments, colored by whether they meet the rating cutoff">
+    <canvas id="canvas"></canvas>
+    <div class="controls">
+      <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+      <button type="button" id="zoom-out" aria-label="Zoom out">&minus;</button>
+      <button type="button" id="zoom-fit" aria-label="Show all five boroughs" style="font-size:13px">&#x2922;</button>
+    </div>
+    <div class="scalebar"><div id="scale-label">1 mi</div><span id="scale-bar" style="width:100px"></span></div>
+    <div class="tip" id="tip" hidden></div>
+    <div class="loading" id="loading">Loading street data&hellip;</div>
+  </div>
+
+  <aside class="panel">
+    <header>
+      <p class="eyebrow">Street Pavement Ratings &middot; Five boroughs<span id="refreshed"></span></p>
+      <h1>NYC Smooth Streets Map</h1>
+      <p class="intro">Move the slider to set the lowest pavement rating you will ride. Every street segment rated at or above it turns green.</p>
+    </header>
+
+    <section class="cutoff">
+      <label for="cutoff">Show segments rated at or above</label>
+      <div class="readout"><output id="cutoff-out" for="cutoff">7.0</output><span>out of 10</span></div>
+      <input type="range" id="cutoff" min="0" max="10" step="0.1" value="7">
+      <svg class="hist" id="hist" viewBox="0 0 360 132" role="img" aria-label="Number of segments at each rating"></svg>
+      <div class="checks">
+        <label><input type="checkbox" id="include-zero"> Count segments rated 0. A quarter of all segments carry a 0, which probably means not rated.</label>
+        <label><input type="checkbox" id="show-below" checked> Show streets below the cutoff in gray</label>
+      </div>
+    </section>
+
+    <section class="summary" aria-live="polite">
+      <dl class="stats" id="stats"></dl>
+      <table>
+        <thead><tr><th>Borough</th><th class="n">Segments</th><th class="n">Miles</th></tr></thead>
+        <tbody id="boros"></tbody>
+      </table>
+    </section>
+
+    <footer class="notes">
+      <p id="note-source">Source: NYC Open Data, Street Pavement Ratings, reduced to the latest inspection for each segment. Ratings run from 1 to 10, with 10 the smoothest.</p>
+      <p id="note-geom">Lines come from the dataset's geometry, simplified to within about 5 feet.</p>
+    </footer>
+  </aside>
+</div>
+
+<script>
+function init(D) {
+  const N = D.rating.length;
+  const rating = Float32Array.from(D.rating, v => v / 100);
+  const lenFt = Float32Array.from(D.len);
+
+  // ---- decode geometry into projected feet (north up) ----
+  const K = 364000, LATC = 40.70, LONC = -73.95, COS = Math.cos(LATC * Math.PI / 180);
+  const segPart = new Uint32Array(N + 1);
+  const partPt = [0];
+  const xs = [], ys = [];
+  const bbox = new Float32Array(4 * N);
+  let gi = 0;
+  for (let s = 0; s < N; s++) {
+    segPart[s] = partPt.length - 1;
+    const parts = D.g[gi++];
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let p = 0; p < parts; p++) {
+      const npt = D.g[gi++];
+      let qx = 0, qy = 0;
+      for (let k = 0; k < npt; k++) {
+        if (k === 0) { qx = D.g[gi++]; qy = D.g[gi++]; } else { qx += D.g[gi++]; qy += D.g[gi++]; }
+        const lon = D.lon0 + qx / 1e5, lat = D.lat0 + qy / 1e5;
+        const x = (lon - LONC) * K * COS, y = -(lat - LATC) * K;
+        xs.push(x); ys.push(y);
+        if (x < x0) x0 = x; if (y < y0) y0 = y; if (x > x1) x1 = x; if (y > y1) y1 = y;
+      }
+      partPt.push(xs.length);
+    }
+    bbox[4 * s] = x0; bbox[4 * s + 1] = y0; bbox[4 * s + 2] = x1; bbox[4 * s + 3] = y1;
+  }
+  segPart[N] = partPt.length - 1;
+  const X = Float32Array.from(xs), Y = Float32Array.from(ys);
+  let W0 = Infinity, H0 = Infinity, W1 = -Infinity, H1 = -Infinity;
+  for (let s = 0; s < N; s++) {
+    W0 = Math.min(W0, bbox[4 * s]); H0 = Math.min(H0, bbox[4 * s + 1]);
+    W1 = Math.max(W1, bbox[4 * s + 2]); H1 = Math.max(H1, bbox[4 * s + 3]);
+  }
+
+  // ---- spatial grid for hover lookup ----
+  const CELL = 1500, grid = new Map();
+  for (let s = 0; s < N; s++) {
+    const cx0 = Math.floor(bbox[4 * s] / CELL), cy0 = Math.floor(bbox[4 * s + 1] / CELL);
+    const cx1 = Math.floor(bbox[4 * s + 2] / CELL), cy1 = Math.floor(bbox[4 * s + 3] / CELL);
+    for (let cx = cx0; cx <= cx1; cx++) for (let cy = cy0; cy <= cy1; cy++) {
+      const k = cx + "," + cy;
+      let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(s);
+    }
+  }
+
+  // ---- cutoff logic and totals (sorted ratings + prefix sums) ----
+  const order = Array.from({ length: N }, (_, i) => i).sort((a, b) => rating[a] - rating[b]);
+  const sortedR = Float32Array.from(order, i => rating[i]);
+  const cumMi = new Float64Array(N + 1);
+  order.forEach((i, k) => { cumMi[k + 1] = cumMi[k] + lenFt[i] / 5280; });
+  const byBoro = D.boros.map((_, b) => {
+    const idx = order.filter(i => D.boro[i] === b);
+    const r = Float32Array.from(idx, i => rating[i]);
+    const c = new Float64Array(idx.length + 1);
+    idx.forEach((i, k) => { c[k + 1] = c[k] + lenFt[i] / 5280; });
+    return { r, c };
+  });
+  function firstAtLeast(arr, t) { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < t - 1e-6) lo = m + 1; else hi = m; } return lo; }
+
+  const slider = document.getElementById("cutoff"), out = document.getElementById("cutoff-out");
+  const incZero = document.getElementById("include-zero"), showBelow = document.getElementById("show-below");
+  function cut() { const t = +slider.value; return (t === 0 && !incZero.checked) ? 0.005 : t; }
+  const matches = (s, t) => rating[s] >= t - 1e-6;
+
+  const fmt = n => n.toLocaleString("en-US");
+  function updatePanel() {
+    const t = cut();
+    out.textContent = (+slider.value).toFixed(1);
+    const k = firstAtLeast(sortedR, t), count = N - k, miles = cumMi[N] - cumMi[k];
+    const allMiles = cumMi[N];
+    document.getElementById("stats").innerHTML =
+      [["Segments", fmt(count)], ["Miles", fmt(Math.round(miles))], ["Share of miles", Math.round(100 * miles / allMiles) + "%"]]
+        .map(([a, b]) => `<div><dt>${a}</dt><dd>${b}</dd></div>`).join("");
+    document.getElementById("boros").innerHTML = D.boros.map((name, b) => {
+      const { r, c } = byBoro[b], j = firstAtLeast(r, t), m = c[r.length] - c[j];
+      const pct = c[r.length] ? 100 * m / c[r.length] : 0;
+      return `<tr><td>${name.charAt(0) + name.slice(1).toLowerCase().replace(/ (\w)/g, (x, y) => " " + y.toUpperCase())}` +
+        `<div class="bar" title="${Math.round(pct)}% of this borough's mapped miles"><i style="width:${pct.toFixed(1)}%"></i></div></td>` +
+        `<td class="n">${fmt(r.length - j)}</td><td class="n">${fmt(Math.round(m))}</td></tr>`;
+    }).join("");
+    drawHist(t);
+  }
+
+  // ---- histogram: 0 on its own, then half-point bins from 1 to 10 ----
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const hist = document.getElementById("hist");
+  const BINS = [];
+  for (let a = 1; a < 10; a += 0.5) BINS.push([a, a + 0.5]);
+  BINS[BINS.length - 1][1] = 10.0001;
+  const countIn = (a, b) => firstAtLeast(sortedR, b) - firstAtLeast(sortedR, a);
+  const zeroCount = firstAtLeast(sortedR, 0.005);
+  const binTotals = BINS.map(([a, b]) => countIn(a, b));
+  const HMAX = Math.max(zeroCount, ...binTotals);
+  const PLOT = { x0: 34, x1: 348, top: 18, base: 108 };
+  const zeroX = 4, zeroW = 20;
+  const bw = (PLOT.x1 - PLOT.x0) / BINS.length;
+  const yOf = n => PLOT.base - (PLOT.base - PLOT.top) * n / HMAX;
+  function topRounded(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h);
+    return `M${x} ${y + h}V${y + r}Q${x} ${y} ${x + r} ${y}H${x + w - r}Q${x + w} ${y} ${x + w} ${y + r}V${y + h}Z`;
+  }
+  function el(tag, attrs, parent) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.appendChild(e); return e; }
+  function drawHist(t) {
+    hist.textContent = "";
+    el("text", { x: 0, y: 10, class: "cap" }, hist).textContent = "Segments by rating";
+    el("line", { x1: zeroX, x2: PLOT.x1, y1: PLOT.base + 0.5, y2: PLOT.base + 0.5, class: "base" }, hist);
+    const bars = [{ a: 0, b: 0.005, total: zeroCount, x: zeroX, w: zeroW, label: "Rated 0" }].concat(
+      BINS.map(([a, b], i) => ({ a, b, total: binTotals[i], x: PLOT.x0 + i * bw + 1, w: bw - 2, label: `Rated ${a.toFixed(1)} to ${(Math.min(b, 10) - 0.01).toFixed(2)}` })));
+    bars.forEach(bar => {
+      const on = bar.a === 0 ? (t <= 0.0001 ? bar.total : 0) : Math.max(0, countIn(Math.max(bar.a, t), bar.b));
+      const off = bar.total - on;
+      const g = el("g", {}, hist);
+      if (bar.total) {
+        // matching part sits on the baseline; the rest stacks above it with a 2px gap
+        const yOn = yOf(on), yAll = yOf(bar.total);
+        if (on) el("path", { d: topRounded(bar.x, yOn, bar.w, PLOT.base - yOn, off ? 0 : 2), class: "on" }, g);
+        if (off) {
+          const top = yAll, bottom = on ? yOn - 2 : PLOT.base;
+          if (bottom - top > 0.5) el("path", { d: topRounded(bar.x, top, bar.w, bottom - top, 2), class: "off" }, g);
+        }
+      }
+      const hit = el("rect", { x: bar.x - 1, y: PLOT.top - 8, width: bar.w + 2, height: PLOT.base - PLOT.top + 8, class: "hit" }, g);
+      el("title", {}, hit).textContent = `${bar.label}: ${fmt(bar.total)} segments, ${fmt(on)} shown`;
+    });
+    el("text", { x: zeroX + zeroW / 2, y: PLOT.base + 14, class: "axis", "text-anchor": "middle" }, hist).textContent = "0";
+    for (let v = 1; v <= 10; v++) {
+      el("text", { x: PLOT.x0 + (v - 1) * 2 * bw, y: PLOT.base + 14, class: "axis", "text-anchor": "middle" }, hist).textContent = v;
+    }
+    if (+slider.value > 0) {
+      const cx = PLOT.x0 + (Math.min(+slider.value, 10) - 1) * 2 * bw;
+      if (+slider.value >= 1) el("line", { x1: cx, x2: cx, y1: PLOT.top - 6, y2: PLOT.base + 3, stroke: "var(--ink)", "stroke-width": 1.5, "stroke-dasharray": "3 2" }, hist);
+    }
+    el("text", { x: PLOT.x1, y: PLOT.base + 26, class: "axis", "text-anchor": "end" }, hist).textContent = "tallest bar " + fmt(HMAX);
+  }
+
+  // ---- canvas drawing ----
+  const mapEl = document.getElementById("map"), canvas = document.getElementById("canvas"), ctx = canvas.getContext("2d");
+  const view = { s: 0.003, tx: 0, ty: 0, fitS: 0.003 };
+  let pathOn = null, pathOff = null;
+  function buildPaths() {
+    const t = cut();
+    pathOn = new Path2D(); pathOff = new Path2D();
+    for (let s = 0; s < N; s++) {
+      const P = matches(s, t) ? pathOn : pathOff;
+      for (let p = segPart[s]; p < segPart[s + 1]; p++) {
+        for (let k = partPt[p]; k < partPt[p + 1]; k++) {
+          if (k === partPt[p]) P.moveTo(X[k], Y[k]); else P.lineTo(X[k], Y[k]);
+        }
+      }
+    }
+  }
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const LABELS = [["Manhattan", 40.785, -73.968], ["Bronx", 40.853, -73.872], ["Brooklyn", 40.648, -73.948], ["Queens", 40.715, -73.82], ["Staten Island", 40.585, -74.145]];
+  let queued = false;
+  function draw() {
+    queued = false;
+    const dpr = window.devicePixelRatio || 1, w = mapEl.clientWidth, h = mapEl.clientHeight;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = css("--panel"); ctx.fillRect(0, 0, w, h);
+    ctx.setTransform(dpr * view.s, 0, 0, dpr * view.s, dpr * view.tx, dpr * view.ty);
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    const zoom = view.s / view.fitS;
+    if (showBelow.checked) {
+      ctx.strokeStyle = css("--below"); ctx.lineWidth = Math.min(2, 0.6 * Math.sqrt(zoom)) / view.s;
+      ctx.stroke(pathOff);
+    }
+    ctx.strokeStyle = css("--match"); ctx.lineWidth = Math.min(4, 0.9 * Math.sqrt(zoom)) / view.s;
+    ctx.stroke(pathOn);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.font = "600 11px " + css("--font-ui"); ctx.fillStyle = css("--label"); ctx.textAlign = "center";
+    if (zoom < 6) LABELS.forEach(([name, lat, lon]) => {
+      const x = (lon - LONC) * K * COS * view.s + view.tx, y = -(lat - LATC) * K * view.s + view.ty;
+      ctx.save(); ctx.letterSpacing = "1.5px"; ctx.fillText(name.toUpperCase(), x, y); ctx.restore();
+    });
+    const NICE = [0.1, 0.25, 0.5, 1, 2, 5];
+    let pick = NICE[0]; NICE.forEach(m => { if (m * 5280 * view.s <= 130) pick = m; });
+    document.getElementById("scale-bar").style.width = (pick * 5280 * view.s) + "px";
+    document.getElementById("scale-label").textContent = pick + " mi";
+  }
+  const redraw = () => { if (!queued) { queued = true; requestAnimationFrame(draw); } };
+
+  function fitAll() {
+    const w = mapEl.clientWidth, h = mapEl.clientHeight, pad = 24;
+    view.s = view.fitS = Math.min((w - 2 * pad) / (W1 - W0), (h - 2 * pad) / (H1 - H0));
+    view.tx = w / 2 - view.s * (W0 + W1) / 2; view.ty = h / 2 - view.s * (H0 + H1) / 2;
+    redraw();
+  }
+  function zoomAt(f, cx, cy) {
+    const s = Math.min(Math.max(view.s * f, view.fitS * 0.6), view.fitS * 400);
+    f = s / view.s; view.tx = cx - (cx - view.tx) * f; view.ty = cy - (cy - view.ty) * f; view.s = s; redraw();
+  }
+
+  // ---- interaction ----
+  const pointers = new Map(); let pinch = null, moved = 0;
+  mapEl.addEventListener("wheel", e => { e.preventDefault(); const r = mapEl.getBoundingClientRect(); zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top); }, { passive: false });
+  mapEl.addEventListener("pointerdown", e => {
+    if (e.target.closest(".controls")) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); moved = 0;
+    mapEl.setPointerCapture(e.pointerId); mapEl.classList.add("dragging");
+    if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) }; }
+  });
+  mapEl.addEventListener("pointermove", e => {
+    if (!pointers.has(e.pointerId)) { if (e.pointerType === "mouse") showTip(e); return; }
+    const prev = pointers.get(e.pointerId), cur = { x: e.clientX, y: e.clientY };
+    pointers.set(e.pointerId, cur);
+    if (pointers.size === 1) { view.tx += cur.x - prev.x; view.ty += cur.y - prev.y; moved += Math.abs(cur.x - prev.x) + Math.abs(cur.y - prev.y); hideTip(); redraw(); }
+    else if (pointers.size === 2 && pinch) {
+      const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y), r = mapEl.getBoundingClientRect();
+      zoomAt(d / pinch.d, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top); pinch.d = d; moved = 99;
+    }
+  });
+  function endPointer(e) {
+    if (pointers.has(e.pointerId) && e.type === "pointerup" && moved < 6) showTip(e);
+    pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null;
+    if (!pointers.size) mapEl.classList.remove("dragging");
+  }
+  mapEl.addEventListener("pointerup", endPointer);
+  mapEl.addEventListener("pointercancel", endPointer);
+  mapEl.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") hideTip(); });
+  mapEl.addEventListener("dblclick", e => { const r = mapEl.getBoundingClientRect(); zoomAt(2, e.clientX - r.left, e.clientY - r.top); });
+  document.getElementById("zoom-in").addEventListener("click", () => zoomAt(1.8, mapEl.clientWidth / 2, mapEl.clientHeight / 2));
+  document.getElementById("zoom-out").addEventListener("click", () => zoomAt(1 / 1.8, mapEl.clientWidth / 2, mapEl.clientHeight / 2));
+  document.getElementById("zoom-fit").addEventListener("click", fitAll);
+
+  // ---- tooltip ----
+  const tip = document.getElementById("tip");
+  const nice = s => (s || "").toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+  function nearest(wx, wy, tol) {
+    const cx = Math.floor(wx / CELL), cy = Math.floor(wy / CELL);
+    let best = -1, bd = tol * tol;
+    const t = cut(), below = showBelow.checked;
+    for (let i = cx - 1; i <= cx + 1; i++) for (let j = cy - 1; j <= cy + 1; j++) {
+      const a = grid.get(i + "," + j); if (!a) continue;
+      for (const s of a) {
+        if (!below && !matches(s, t)) continue;
+        for (let p = segPart[s]; p < segPart[s + 1]; p++) for (let k = partPt[p]; k < partPt[p + 1] - 1; k++) {
+          const ax = X[k], ay = Y[k], bx = X[k + 1], by = Y[k + 1];
+          const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+          let u = L ? ((wx - ax) * dx + (wy - ay) * dy) / L : 0; u = Math.max(0, Math.min(1, u));
+          const ex = ax + u * dx - wx, ey = ay + u * dy - wy, d = ex * ex + ey * ey;
+          if (d < bd) { bd = d; best = s; }
+        }
+      }
+    }
+    return best;
+  }
+  function showTip(e) {
+    const m = mapEl.getBoundingClientRect(), px = e.clientX - m.left, py = e.clientY - m.top;
+    const s = nearest((px - view.tx) / view.s, (py - view.ty) / view.s, 8 / view.s);
+    if (s < 0) { hideTip(); return; }
+    const r = rating[s], on = matches(s, cut());
+    tip.innerHTML = `<b>${nice(D.names[D.on[s]])}</b>${nice(D.names[D.from[s]])} &rarr; ${nice(D.names[D.to[s]])}` +
+      `<div class="num">${nice(D.boros[D.boro[s]])} &middot; ${Math.round(lenFt[s])} ft</div>` +
+      `<div class="num">Rating ${r === 0 ? "0 (probably not rated)" : r.toFixed(2)}</div>` +
+      `<span class="state ${on ? "on" : "off"}">${on ? "Meets cutoff" : "Below cutoff"}</span>`;
+    tip.hidden = false;
+    let x = px + 14, y = py + 14;
+    if (x + tip.offsetWidth > m.width - 8) x = px - tip.offsetWidth - 14;
+    if (y + tip.offsetHeight > m.height - 8) y = py - tip.offsetHeight - 14;
+    tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+  }
+  function hideTip() { tip.hidden = true; }
+
+  // ---- wiring ----
+  let pending = false;
+  function onCutoff() {
+    updatePanel();
+    if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; buildPaths(); draw(); }); }
+  }
+  slider.addEventListener("input", onCutoff);
+  incZero.addEventListener("change", onCutoff);
+  showBelow.addEventListener("change", redraw);
+  window.addEventListener("resize", fitAll);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw);
+  new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  updatePanel(); buildPaths(); fitAll();
+
+  const meta = D.meta || {};
+  if (meta.updated) document.getElementById("refreshed").textContent = " \u00b7 Data refreshed " + meta.updated;
+  if (meta.inspectedFrom) document.getElementById("note-source").textContent =
+    `Source: NYC Open Data, Street Pavement Ratings, reduced to the latest inspection for each segment. ` +
+    `Those inspections date from ${meta.inspectedFrom} to ${meta.inspectedTo}. Ratings run from 1 to 10, with 10 the smoothest.`;
+  if (meta.notDrawn != null) document.getElementById("note-geom").textContent =
+    `Lines come from the dataset's geometry, simplified to within about 5 feet. ` +
+    `${fmt(meta.notDrawn)} segment${meta.notDrawn === 1 ? "" : "s"} could not be drawn because ${meta.notDrawn === 1 ? "it had" : "they had"} no line or no borough.`;
+}
+
+fetch("data.json", { cache: "no-cache" })
+  .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+  .then(D => { document.getElementById("loading").hidden = true; init(D); })
+  .catch(err => {
+    const el = document.getElementById("loading");
+    el.classList.add("error");
+    el.textContent = location.protocol === "file:"
+      ? "The map loads data.json from a web server. In this folder, run: python -m http.server 8000, then open http://localhost:8000"
+      : "Could not load data.json (" + err.message + "). Check that data.json is in the same folder as index.html.";
+  });
+</script>
+
+</body>
+</html>
