@@ -1,5 +1,7 @@
 # NYC Smooth Streets Map
 
+[Live map here](https://bob-foss.github.io/NYC-Street-Smoothness-Map/)
+
 An interactive map of every street segment in New York City's five boroughs, colored by pavement quality. A slider sets the lowest rating you will accept, and every segment rated at or above it is highlighted. The project started as a tool for rollerbladers and skateboarders, whose small wheels make rough pavement matter far more than it does for cars or bikes.
 
 The data refreshes itself from NYC Open Data once a month.
