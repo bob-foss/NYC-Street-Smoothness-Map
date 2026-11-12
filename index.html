@@ -25,7 +25,9 @@
     --rule: #d6dbdd;
     --below: #cdd3d6;       /* streets under the cutoff */
     --below-bar: #c3c9cc;
-    --match: #0b7a5c;       /* streets at or above the cutoff */
+    --match: #0b7a5c;       /* smooth mode: streets at or above the cutoff */
+    --rough: #d4300f;       /* rough mode: streets below the cutoff (orange-red) */
+    --hl: var(--match);     /* whichever mode is active */
     --label: #48545a;
     --font-ui: "Overpass", system-ui, -apple-system, "Segoe UI", sans-serif;
     --font-data: "Overpass Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
@@ -33,15 +35,16 @@
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #101417; --panel: #161b1f; --ink: #e5eaec; --muted: #95a1a7; --rule: #262e33;
-      --below: #2a3136; --below-bar: #3a4349; --match: #45c99a; --label: #a7b2b8;
+      --below: #2a3136; --below-bar: #3a4349; --match: #45c99a; --rough: #ff5a36; --label: #a7b2b8;
       color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --bg: #101417; --panel: #161b1f; --ink: #e5eaec; --muted: #95a1a7; --rule: #262e33;
-    --below: #2a3136; --below-bar: #3a4349; --match: #45c99a; --label: #a7b2b8;
+    --below: #2a3136; --below-bar: #3a4349; --match: #45c99a; --rough: #ff5a36; --label: #a7b2b8;
     color-scheme: dark;
   }
+  :root[data-mode="below"] { --hl: var(--rough); }
 
   html, body { height: 100%; }
   body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.5; }
@@ -69,7 +72,7 @@
     font: 600 18px var(--font-ui); cursor: pointer; display: grid; place-items: center;
   }
   .controls button:hover { border-color: var(--muted); }
-  button:focus-visible, input:focus-visible { outline: 2px solid var(--match); outline-offset: 2px; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--hl); outline-offset: 2px; }
   .scalebar { position: absolute; left: 12px; bottom: 12px; color: var(--muted); font: 400 11px var(--font-data); pointer-events: none; }
   .scalebar span { display: block; height: 6px; border: 1.5px solid var(--muted); border-top: 0; margin-top: 2px; }
   .tip {
@@ -81,7 +84,7 @@
   .tip b { display: block; font-weight: 800; }
   .tip .num { font-family: var(--font-data); font-variant-numeric: tabular-nums; color: var(--muted); }
   .tip .state { display: inline-block; margin-top: 4px; font: 600 11px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; }
-  .tip .state.on { color: var(--match); }
+  .tip .state.on { color: var(--hl); }
   .tip .state.off { color: var(--muted); }
 
   /* ---------- panel ---------- */
@@ -92,19 +95,29 @@
   .cutoff { border-top: 1px solid var(--rule); padding-top: 16px; display: flex; flex-direction: column; gap: 10px; }
   .cutoff label { font-weight: 600; }
   .readout { display: flex; align-items: baseline; gap: 10px; }
-  .readout output { font: 600 44px/1 var(--font-data); font-variant-numeric: tabular-nums; color: var(--match); }
+  .readout input {
+    font: 600 44px/1 var(--font-data); font-variant-numeric: tabular-nums; color: var(--hl);
+    width: 3.6ch; padding: 0 2px; margin: 0; background: transparent;
+    border: 0; border-bottom: 2px dashed var(--rule); border-radius: 0; cursor: text;
+    appearance: textfield; -moz-appearance: textfield;
+  }
+  .readout input::-webkit-outer-spin-button, .readout input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .readout input:hover { border-bottom-color: var(--muted); }
+  .readout input:focus { outline: none; border-bottom: 2px solid var(--hl); }
+  .readout input.bad { border-bottom-color: var(--rough); }
+  .typehint { color: var(--muted); font-size: 13px; }
   .readout span { color: var(--muted); }
-  input[type="range"] { width: 100%; accent-color: var(--match); margin: 0; }
+  input[type="range"] { width: 100%; accent-color: var(--hl); margin: 0; }
   .hist { width: 100%; height: auto; display: block; overflow: visible; }
   .hist .axis { fill: var(--muted); font: 400 10px var(--font-data); }
   .hist .cap { fill: var(--muted); font: 600 10px var(--font-ui); letter-spacing: .1em; text-transform: uppercase; }
   .hist .base { stroke: var(--rule); stroke-width: 1; }
-  .hist .on { fill: var(--match); }
+  .hist .on { fill: var(--hl); }
   .hist .off { fill: var(--below-bar); }
   .hist .hit { fill: transparent; cursor: default; }
   .checks { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
   .checks label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
-  .checks input { margin-top: 4px; accent-color: var(--match); }
+  .checks input { margin-top: 4px; accent-color: var(--hl); }
   .summary { border-top: 1px solid var(--rule); padding-top: 16px; display: flex; flex-direction: column; gap: 12px; }
   .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
   .stats div { display: flex; flex-direction: column; gap: 2px; }
@@ -116,9 +129,16 @@
   th.n, td.n { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
   td.n { font-size: 13px; }
   .bar { height: 4px; border-radius: 2px; background: var(--below-bar); margin-top: 4px; overflow: hidden; }
-  .bar i { display: block; height: 100%; background: var(--match); border-radius: 2px; }
+  .bar i { display: block; height: 100%; background: var(--hl); border-radius: 2px; }
   .notes { border-top: 1px solid var(--rule); padding-top: 14px; color: var(--muted); font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
   .notes p { margin: 0; }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--rule); border-radius: 8px; padding: 3px; background: var(--bg); }
+  .modes label { position: relative; display: flex; flex-direction: column; gap: 1px; padding: 7px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+  .modes label small { font-weight: 400; color: var(--muted); font-size: 12px; }
+  .modes input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .modes label:has(input:checked) { background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .modes label:has(input:checked) span { color: var(--hl); }
+  .modes label:has(input:focus-visible) { outline: 2px solid var(--hl); outline-offset: 1px; }
   .loading { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); background: var(--panel); }
   .loading.error { color: var(--ink); }
 
@@ -133,7 +153,7 @@
 <body>
 
 <div class="app">
-  <div class="map" id="map" aria-label="Map of New York City street segments, colored by whether they meet the rating cutoff">
+  <div class="map" id="map" aria-label="Map of New York City street segments, highlighted by pavement rating">
     <canvas id="canvas"></canvas>
     <div class="controls">
       <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
@@ -147,19 +167,28 @@
 
   <aside class="panel">
     <header>
-      <p class="eyebrow">Street Pavement Ratings &middot; Five boroughs<span id="refreshed"></span></p>
-      <h1>NYC Smooth Streets Map</h1>
-      <p class="intro">Move the slider to set the lowest pavement rating you will ride. Every street segment rated at or above it turns green.</p>
+    <p class="eyebrow"><span id="refreshed"></span></p>
+      <h1>Street Pavement Ratings For All NYC Boroughs</h1>
+      <h4>For rollerbladers, skateboarders, or anyone else who needs it</h4>
+      <p class="intro">Choose whether to highlight smooth or rough streets, then set the rating with the slider or type it into the number.</p>
     </header>
 
     <section class="cutoff">
-      <label for="cutoff">Show segments rated at or above</label>
-      <div class="readout"><output id="cutoff-out" for="cutoff">7.0</output><span>out of 10</span></div>
-      <input type="range" id="cutoff" min="0" max="10" step="0.1" value="7">
-      <svg class="hist" id="hist" viewBox="0 0 360 132" role="img" aria-label="Number of segments at each rating"></svg>
+      <div class="modes" role="radiogroup" aria-label="Which streets to highlight">
+        <label><input type="radio" name="mode" id="mode-above" value="above" checked><span>Smooth streets</span><small>Rated at or above</small></label>
+        <label><input type="radio" name="mode" id="mode-below" value="below"><span>Rough streets</span><small>Rated below</small></label>
+      </div>
+      <label for="cutoff-num" id="cutoff-label">Highlight street segments rated at or above</label>
+      <div class="readout">
+        <input type="number" id="cutoff-num" inputmode="decimal" min="0" max="10" step="0.01" value="7.0" aria-describedby="type-hint">
+        <span>out of 10</span>
+      </div>
+      <input type="range" id="cutoff" min="0" max="10" step="0.1" value="7" aria-label="Rating cutoff slider">
+      <!-- <span class="typehint" id="type-hint">Click the number to type any value from 0 to 10, such as 7.25.</span> -->
+      <svg class="hist" id="hist" viewBox="0 0 360 140" role="img" aria-label="Number of segments at each rating"></svg>
       <div class="checks">
-        <label><input type="checkbox" id="include-zero"> Count segments rated 0. A quarter of all segments carry a 0, which probably means not rated.</label>
-        <label><input type="checkbox" id="show-below" checked> Show streets below the cutoff in gray</label>
+        <label><input type="checkbox" id="include-zero"> Include street segments rated 0. Streets rated 0 means not yet rated.</label>
+        <label><input type="checkbox" id="show-below" checked> Show the streets that are not highlighted in gray</label>
       </div>
     </section>
 
@@ -172,8 +201,7 @@
     </section>
 
     <footer class="notes">
-      <p id="note-source">Source: NYC Open Data, Street Pavement Ratings, reduced to the latest inspection for each segment. Ratings run from 1 to 10, with 10 the smoothest.</p>
-      <p id="note-geom">Lines come from the dataset's geometry, simplified to within about 5 feet.</p>
+      <p id="note-source"> Source:  <a href="https://data.cityofnewyork.us/Transportation/Street-Pavement-Ratings/6yyb-pb25/about_data">NYC Open Data, Street Pavement Ratings</a> , reduced to the latest inspection for each segment. Ratings run from 1 to 10, with 10 the smoothest.</p>
     </footer>
   </aside>
 </div>
@@ -242,26 +270,36 @@ function init(D) {
   });
   function firstAtLeast(arr, t) { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < t - 1e-6) lo = m + 1; else hi = m; } return lo; }
 
-  const slider = document.getElementById("cutoff"), out = document.getElementById("cutoff-out");
+  const slider = document.getElementById("cutoff"), num = document.getElementById("cutoff-num");
   const incZero = document.getElementById("include-zero"), showBelow = document.getElementById("show-below");
-  function cut() { const t = +slider.value; return (t === 0 && !incZero.checked) ? 0.005 : t; }
-  const matches = (s, t) => rating[s] >= t - 1e-6;
+  const state = { t: 7, mode: "above" };
+  const EPS = 1e-6, ZERO_TOP = 0.005;   // ratings below 0.005 are the 0 ("probably not rated") group
+  // The highlighted ratings form one range [lo, hi): at or above the cutoff, or below it.
+  function band() {
+    let lo = state.mode === "above" ? state.t : 0;
+    const hi = state.mode === "above" ? 11 : state.t;
+    if (!incZero.checked) lo = Math.max(lo, ZERO_TOP);
+    return [lo, hi];
+  }
+  function cut() { return band(); }
+  const matches = (s, b) => rating[s] >= b[0] - EPS && rating[s] < b[1] - EPS;
+  const countBetween = (arr, lo, hi) => hi <= lo ? 0 : Math.max(0, firstAtLeast(arr, hi) - firstAtLeast(arr, lo));
 
   const fmt = n => n.toLocaleString("en-US");
   function updatePanel() {
-    const t = cut();
-    out.textContent = (+slider.value).toFixed(1);
-    const k = firstAtLeast(sortedR, t), count = N - k, miles = cumMi[N] - cumMi[k];
+    const t = band();
+    const kLo = firstAtLeast(sortedR, t[0]), kHi = Math.max(kLo, firstAtLeast(sortedR, t[1]));
+    const count = kHi - kLo, miles = cumMi[kHi] - cumMi[kLo];
     const allMiles = cumMi[N];
     document.getElementById("stats").innerHTML =
       [["Segments", fmt(count)], ["Miles", fmt(Math.round(miles))], ["Share of miles", Math.round(100 * miles / allMiles) + "%"]]
         .map(([a, b]) => `<div><dt>${a}</dt><dd>${b}</dd></div>`).join("");
     document.getElementById("boros").innerHTML = D.boros.map((name, b) => {
-      const { r, c } = byBoro[b], j = firstAtLeast(r, t), m = c[r.length] - c[j];
+      const { r, c } = byBoro[b], jLo = firstAtLeast(r, t[0]), jHi = Math.max(jLo, firstAtLeast(r, t[1])), m = c[jHi] - c[jLo];
       const pct = c[r.length] ? 100 * m / c[r.length] : 0;
       return `<tr><td>${name.charAt(0) + name.slice(1).toLowerCase().replace(/ (\w)/g, (x, y) => " " + y.toUpperCase())}` +
         `<div class="bar" title="${Math.round(pct)}% of this borough's mapped miles"><i style="width:${pct.toFixed(1)}%"></i></div></td>` +
-        `<td class="n">${fmt(r.length - j)}</td><td class="n">${fmt(Math.round(m))}</td></tr>`;
+        `<td class="n">${fmt(jHi - jLo)}</td><td class="n">${fmt(Math.round(m))}</td></tr>`;
     }).join("");
     drawHist(t);
   }
@@ -292,7 +330,7 @@ function init(D) {
     const bars = [{ a: 0, b: 0.005, total: zeroCount, x: zeroX, w: zeroW, label: "Rated 0" }].concat(
       BINS.map(([a, b], i) => ({ a, b, total: binTotals[i], x: PLOT.x0 + i * bw + 1, w: bw - 2, label: `Rated ${a.toFixed(1)} to ${(Math.min(b, 10) - 0.01).toFixed(2)}` })));
     bars.forEach(bar => {
-      const on = bar.a === 0 ? (t <= 0.0001 ? bar.total : 0) : Math.max(0, countIn(Math.max(bar.a, t), bar.b));
+      const on = countBetween(sortedR, Math.max(bar.a, t[0]), Math.min(bar.b, t[1]));
       const off = bar.total - on;
       const g = el("g", {}, hist);
       if (bar.total) {
@@ -311,9 +349,9 @@ function init(D) {
     for (let v = 1; v <= 10; v++) {
       el("text", { x: PLOT.x0 + (v - 1) * 2 * bw, y: PLOT.base + 14, class: "axis", "text-anchor": "middle" }, hist).textContent = v;
     }
-    if (+slider.value > 0) {
-      const cx = PLOT.x0 + (Math.min(+slider.value, 10) - 1) * 2 * bw;
-      if (+slider.value >= 1) el("line", { x1: cx, x2: cx, y1: PLOT.top - 6, y2: PLOT.base + 3, stroke: "var(--ink)", "stroke-width": 1.5, "stroke-dasharray": "3 2" }, hist);
+    if (state.t >= 1) {
+      const cx = PLOT.x0 + (Math.min(state.t, 10) - 1) * 2 * bw;
+      el("line", { x1: cx, x2: cx, y1: PLOT.top - 6, y2: PLOT.base + 3, stroke: "var(--ink)", "stroke-width": 1.5, "stroke-dasharray": "3 2" }, hist);
     }
     el("text", { x: PLOT.x1, y: PLOT.base + 26, class: "axis", "text-anchor": "end" }, hist).textContent = "tallest bar " + fmt(HMAX);
   }
@@ -350,7 +388,7 @@ function init(D) {
       ctx.strokeStyle = css("--below"); ctx.lineWidth = Math.min(2, 0.6 * Math.sqrt(zoom)) / view.s;
       ctx.stroke(pathOff);
     }
-    ctx.strokeStyle = css("--match"); ctx.lineWidth = Math.min(4, 0.9 * Math.sqrt(zoom)) / view.s;
+    ctx.strokeStyle = css("--hl"); ctx.lineWidth = Math.min(4, 0.9 * Math.sqrt(zoom)) / view.s;
     ctx.stroke(pathOn);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.font = "600 11px " + css("--font-ui"); ctx.fillStyle = css("--label"); ctx.textAlign = "center";
@@ -438,7 +476,7 @@ function init(D) {
     tip.innerHTML = `<b>${nice(D.names[D.on[s]])}</b>${nice(D.names[D.from[s]])} &rarr; ${nice(D.names[D.to[s]])}` +
       `<div class="num">${nice(D.boros[D.boro[s]])} &middot; ${Math.round(lenFt[s])} ft</div>` +
       `<div class="num">Rating ${r === 0 ? "0 (probably not rated)" : r.toFixed(2)}</div>` +
-      `<span class="state ${on ? "on" : "off"}">${on ? "Meets cutoff" : "Below cutoff"}</span>`;
+      `<span class="state ${on ? "on" : "off"}">${on ? "Highlighted" : "Not highlighted"}</span>`;
     tip.hidden = false;
     let x = px + 14, y = py + 14;
     if (x + tip.offsetWidth > m.width - 8) x = px - tip.offsetWidth - 14;
@@ -453,7 +491,30 @@ function init(D) {
     updatePanel();
     if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; buildPaths(); draw(); }); }
   }
-  slider.addEventListener("input", onCutoff);
+  const label = document.getElementById("cutoff-label");
+  const show = v => (Math.round(v * 10) === v * 10 ? v.toFixed(1) : String(+v.toFixed(2)));
+  function setCutoff(v, from) {
+    state.t = Math.min(10, Math.max(0, Math.round(v * 100) / 100));
+    if (from !== "slider") slider.value = state.t;
+    if (from !== "typing") num.value = show(state.t);
+    num.classList.remove("bad");
+    onCutoff();
+  }
+  slider.addEventListener("input", () => setCutoff(+slider.value, "slider"));
+  num.addEventListener("input", () => {
+    const v = parseFloat(num.value);
+    if (num.value.trim() === "" || isNaN(v) || v < 0 || v > 10) { num.classList.add("bad"); return; }
+    setCutoff(v, "typing");
+  });
+  num.addEventListener("change", () => setCutoff(isNaN(parseFloat(num.value)) ? state.t : parseFloat(num.value), "done"));
+  num.addEventListener("keydown", e => { if (e.key === "Enter") num.blur(); });
+  num.addEventListener("focus", () => num.select());
+  document.querySelectorAll('input[name="mode"]').forEach(r => r.addEventListener("change", () => {
+    state.mode = r.value;
+    document.documentElement.dataset.mode = state.mode;
+    label.textContent = state.mode === "above" ? "Highlight street segments rated at or above" : "Highlight street segments rated below";
+    onCutoff(); redraw();
+  }));
   incZero.addEventListener("change", onCutoff);
   showBelow.addEventListener("change", redraw);
   window.addEventListener("resize", fitAll);
@@ -463,12 +524,13 @@ function init(D) {
   updatePanel(); buildPaths(); fitAll();
 
   const meta = D.meta || {};
-  if (meta.updated) document.getElementById("refreshed").textContent = " \u00b7 Data refreshed " + meta.updated;
-  if (meta.inspectedFrom) document.getElementById("note-source").textContent =
-    `Source: NYC Open Data, Street Pavement Ratings, reduced to the latest inspection for each segment. ` +
-    `Those inspections date from ${meta.inspectedFrom} to ${meta.inspectedTo}. Ratings run from 1 to 10, with 10 the smoothest.`;
+  if (meta.updated) document.getElementById("refreshed").textContent = "Data refreshed " + meta.updated;
+  if (meta.inspectedFrom) document.getElementById("note-source").innerHTML =
+    `Source: <a href="https://data.cityofnewyork.us/Transportation/Street-Pavement-Ratings/6yyb-pb25/about_data">NYC Department of Transportation, Street Pavement Ratings</a>, ` +
+    `filtered down to the newest ratings for each street. ` +
+    `Ratings run from 1 to 10, with 10 being the smoothest.`;
   if (meta.notDrawn != null) document.getElementById("note-geom").textContent =
-    `Lines come from the dataset's geometry, simplified to within about 5 feet. ` +
+    `` +
     `${fmt(meta.notDrawn)} segment${meta.notDrawn === 1 ? "" : "s"} could not be drawn because ${meta.notDrawn === 1 ? "it had" : "they had"} no line or no borough.`;
 }
 
